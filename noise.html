@@ -1,0 +1,120 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>;-)</title>
+<style type="text/css"></style>
+<script type="text/javascript" src="http://coffeescript.org/extras/coffee-script.js"></script>
+<script type="text/coffeescript">
+base64encode = (source) ->
+	map = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	r = ""
+	for i in [0..(source.length - 1)] by 3
+		x = source[i] << 16
+		if i + 1 < source.length
+			x |= source[i + 1] << 8
+		if i + 2 < source.length
+			x |= source[i + 2]
+		for j in [0..3]
+			r += map[(x & (0xFC0000 >> (j * 6))) >> ((3 - j) * 6)]
+	r + "==".substring(3 - source.length % 3, 3)
+
+getBytes = (string) -> x.charCodeAt(0) for x in string
+
+littleEndian = (value, length) -> 0xFF & value >> (8 * i) for i in [0..(length - 1)]
+
+quantize = (x) -> Math.round(127.5 + Math.min(Math.max(x, -1.0), 1.0) * 127.5)
+
+getAudio = (sample, duration, sampleRate) ->
+	samples = Math.floor(sampleRate * duration)
+	sampleDuration = 1.0 / sampleRate
+	data = [0, 0, 0]
+	for i in [0..(samples - 2)]
+		data.push(quantize(sample(i * sampleDuration)))
+	data.push(0) if data % 2 is 1
+	s = "data:audio/wav;base64," + 
+		base64encode(getBytes("RIFF").concat(
+			littleEndian(36 + data.length, 4), 
+			getBytes("WAVEfmt "), 
+			littleEndian(16, 4), 
+			littleEndian(1, 2), 
+			littleEndian(1, 2), 
+			littleEndian(sampleRate, 4), 
+			littleEndian(sampleRate, 4),
+			littleEndian(1, 2), 
+			littleEndian(8, 2), 
+			getBytes("data"), 
+			littleEndian(data.length, 4), 
+			data))
+	new Audio(s)
+
+concertA = Math.log(440.0) * 12.0 / Math.LN2
+
+sum = (a) -> (t) ->
+	s = 0
+	s += f(t) for f in a
+	s
+
+mix = (f...) -> sum(f)
+
+echo = (time, feedback) -> (f) -> (t) ->
+	if (feedback > 1.0 / 255.0)
+		f(t) + (gain(feedback) echo(time, feedback * feedback) f)(t - time)
+	else
+		f(t)
+
+delay = (time, mix) -> (f) -> (t) -> 
+	f(t) * (1.0 - mix) + f(t - time) * mix
+
+gain = (x) -> (f) -> (t) -> x * f(t)
+
+sine = (f) -> (t) -> Math.sin(Math.PI * 2.0 * t * f(t))
+
+exponentiate = (f) -> (t) -> Math.pow(2.0, (f(t) + concertA) / 12.0)
+
+pattern = (f) -> (t) -> 
+	p = [1, 5, 8, 8, 0, 5, 8, 8, 1, 5, 8, 8, 0, 5, 8, 8, -6, 9, 8, 4, 1, 1, -1, -1, -3, 9, 8, 4, 1, 1, -1, -1]
+	p[Math.abs(f(t)) % p.length]
+
+step = (f) -> (t) -> f(Math.floor(t))
+
+music = (f) -> (t) -> (echo(0.666, 0.666) gain((sine (x) -> 0.5)(t) * 0.2) sine exponentiate pattern step f)(t)
+
+sound = (t) -> music((x) -> x)(t)
+
+draw = (canvas, f, from, to, min, max) ->
+	ctx = canvas.getContext('2d')
+	ctx.beginPath()
+	ctx.moveTo(0, (f(from) - min) / (max - min) * canvas.height)
+	for x in [1..canvas.width]
+		ctx.lineTo(x, (f((x / canvas.width) * (to - from) + from) - min) / (max - min) * canvas.height)
+	ctx.stroke()
+
+window.note = (v) ->
+	audio = getAudio(((t) -> (gain((sine (x) -> 0.5)(t) * 0.2) sine exponentiate ((x) -> v))(t)), 1.0, 44100)
+	audio.load()
+	audio.play()
+
+window.onkeydown = (e) ->
+	tone = parseInt(String.fromCharCode(e.keyCode or e.which))
+	note(tone)
+
+document.body.onload = () ->
+	duration = 32.0
+	sampleFrequency = 44100
+	canvas = document.createElement('canvas')
+	window.onresize = () ->
+		canvas.width = 32000
+		canvas.height = window.innerHeight - 5
+		draw(canvas, sound, 0.0, duration, -1.0, 1.0)
+	window.onresize();
+	document.body.appendChild(canvas)
+	canvas.style = 'height:100%; width:100%; margin:0; border:0; padding:0'
+	audio = getAudio(sound, duration, sampleFrequency)
+	audio.load()
+	audio.play()
+	setTimeout((() -> audio.play()), duration * 1000)
+</script>
+</head>
+<body style='margin:0; padding:0; border:0'></body>
+</html>
